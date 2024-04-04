@@ -10,7 +10,7 @@
 #include <sys/wait.h>
 #include <linux/ptrace.h>
 
-#include "syscall.h"
+#include "syscalls.h"
 
 #define ERROR(key) \
   do { \
@@ -68,22 +68,30 @@ char *read_str(pid_t child, void *addr)
   } while (1);
 }
 
-int print(int type, uint64_t value, pid_t child)
+int print(enum TYPE type, uint64_t value, pid_t child)
 {
+  // This switch need to be kept in line with list_syscalls' syscalls.h' enum
+  // TYPE and the usage of it in syscalls.c.
   switch (type)
   {
-    case NUM:
-      return printf("%ld", (int64_t)value);
-    case UNSIGNED:
-      return printf("%lu", value);
-    case STRING:
+    case VOID:     return printf("?");
+    case ELLIPSIS: return printf("...");
+    case INT:      return printf("%d", (int)value);
+    case UINT:     return printf("%u", (unsigned)value);
+    case LONG:     return printf("%ld", (long)value);
+    case UINT32:   return printf("%u", (uint32_t)value);
+    case UINT64:   return printf("%lu", (uint64_t)value);
+    case SIZE_T:   return printf("%zu", (size_t)value);
+    case SSIZE_T:  return printf("%zd", (size_t)value);
+
+    case CHAR_P:
       if (value == 0)
         return printf("NULL");
       char *str = read_str(child, (char *)value);
       int ret = printf("\"%s\"", str);
       free(str);
       return ret;
-    case STRINGS:
+    case ARGV:
       if (value == 0)
         return printf("NULL");
       char **argv = (char **)value;
@@ -113,21 +121,28 @@ int print(int type, uint64_t value, pid_t child)
           break;
       }
       return printf("%p /* %d vars */", (void *)value, i);
+
     case VOID_P:
-    case CONST_VOID_P:
-    case STRUCT_P:
-    case PVOID:
-    case STRUCT_STAT_P:
-    case STRUCT_FD_P:
+    case UNKNOWN_P:
+    case INT_P:
+    case UINT_P:
+    case UINT32_P:
+    case UINT64_P:
+    case SIZE_T_P:
+    case CHAR_PP:
+    case VOID_PP:
       if (value == 0)
         return printf("NULL");
       return printf("%p", (void *)value);
-    default:
+
+    case UNKNOWN:
       return printf("%#lx", value);
+    default:
+      fprintf(stderr,
+          "Unknown type descriptor: %d. Code needs to be updated.", type);
+      exit(1);
   }
 }
-
-
 
 int main(int argc, char **argv)
 {
@@ -191,21 +206,21 @@ int main(int argc, char **argv)
       P(PTRACE_GET_SYSCALL_INFO, sizeof(info), &info);
       if (info.op == PTRACE_SYSCALL_INFO_ENTRY)
       {
-        for (i = 0; syscall_list[i].nr != (uint64_t)-1; ++i)
+        for (i = 0; syscalls[i].nr != -1; ++i)
         {
-          if (info.entry.nr == syscall_list[i].nr)
+          if (info.entry.nr == (uint64_t)syscalls[i].nr)
             break;
         }
         int printed;
-        if (syscall_list[i].nr != (uint64_t)-1)
-          printed = printf("%s(", syscall_list[i].name);
+        if (syscalls[i].nr != -1)
+          printed = printf("%s(", syscalls[i].name);
         else
           printed = printf("syscall_%#llx(", info.entry.nr);
-        for (int j = 0; j < syscall_list[i].argc; ++j)
+        for (int j = 0; j < syscalls[i].argc; ++j)
         {
           if (j != 0)
             printed += printf(", ");
-          printed += print(syscall_list[i].args[j], info.entry.args[j], child);
+          printed += print(syscalls[i].args[j], info.entry.args[j], child);
         }
         printed += printf(")");
         for (; printed < 39; ++printed)
@@ -222,7 +237,7 @@ int main(int argc, char **argv)
           printf("-1 %s (%s)", strerrorname_np(errnum), strerror(errnum));
         }
         else
-          print(syscall_list[i].retval, info.exit.rval, child);
+          print(syscalls[i].retval, info.exit.rval, child);
         printf("\n");
         nr = 0;
       }

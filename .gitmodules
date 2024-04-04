@@ -1,0 +1,3 @@
+[submodule "list_syscalls"]
+	path = list_syscalls
+	url = https://github.com/cigix/list_syscalls
